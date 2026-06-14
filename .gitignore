@@ -1,0 +1,6 @@
+.claude/
+CLAUDE.md
+AGENTS.md
+.env
+.env.*
+node_modules/

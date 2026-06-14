@@ -110,15 +110,22 @@ export interface OneShotCapabilities {
 
 export interface OneShotEstimate {
   success: boolean
-  requiredPaymentAmount: string
-  gasUsed: string
-  context: string
+  requiredPaymentAmount?: string
+  gasUsed: Record<string, string>
+  context?: string
+  error?: string
 }
 
 export interface OneShotTask {
-  taskId: string
-  status: 'Pending' | 'Confirmed' | 'Rejected' | 'Reverted'
+  id: string
+  status: 'Pending' | 'Submitted' | 'Confirmed' | 'Rejected' | 'Reverted'
   txHash?: Hex
+  receipt?: {
+    transactionHash: Hex
+    blockNumber: string
+    gasUsed: string
+  }
+  error?: string
 }
 
 // Delegation chain type for the tree visualization

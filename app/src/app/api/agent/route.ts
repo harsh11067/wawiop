@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 import {
   executeTask,
   initializeAgents,
@@ -8,6 +8,7 @@ import {
   resolveClearSign,
   getAgentState,
 } from '@/lib/agents/governor'
+import { deriveAgentAddresses } from '@/lib/delegation'
 import { parseRules } from '@/lib/venice'
 import { getActionLog, clearActionLog } from '@/lib/agents/memory'
 import type { ResearchTask, ParsedRules } from '@/lib/types'
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
 
   switch (action) {
     case 'initialize': {
-      const { addresses } = body as {
+      const { addresses: providedAddresses } = body as {
         addresses: {
           user: Address
           governor: Address
@@ -27,29 +28,55 @@ export async function POST(request: NextRequest) {
           summarizer: Address
         }
       }
-      initializeAgents(addresses)
-      return NextResponse.json({ success: true, message: 'Agents initialized' })
+
+      const walletKey = process.env.WALLET_PRIVATE_KEY
+      if (!walletKey) {
+        return NextResponse.json(
+          { error: 'WALLET_PRIVATE_KEY is required in .env.local' },
+          { status: 500 }
+        )
+      }
+
+      const prefixedKey = (walletKey.startsWith('0x') ? walletKey : `0x${walletKey}`) as Hex
+      const derived = deriveAgentAddresses(prefixedKey)
+      initializeAgents(derived)
+      return NextResponse.json({
+        success: true,
+        message: 'Agents initialized with derived addresses',
+        addresses: {
+          user: derived.user,
+          governor: derived.governor,
+          researcher: derived.researcher,
+          summarizer: derived.summarizer,
+        },
+        keysLoaded: true,
+      })
+    }
+
+    case 'get-addresses': {
+      const addrKey = process.env.WALLET_PRIVATE_KEY
+      if (!addrKey) {
+        return NextResponse.json(
+          { error: 'WALLET_PRIVATE_KEY is required in .env.local' },
+          { status: 500 }
+        )
+      }
+      const addrPrefixed = (addrKey.startsWith('0x') ? addrKey : `0x${addrKey}`) as Hex
+      const derived = deriveAgentAddresses(addrPrefixed)
+      return NextResponse.json({
+        user: derived.user,
+        governor: derived.governor,
+        researcher: derived.researcher,
+        summarizer: derived.summarizer,
+        keysLoaded: true,
+      })
     }
 
     case 'set-rules': {
       const { rules: rawRules } = body as { rules: string }
-
-      let parsedRules: ParsedRules
-      try {
-        parsedRules = await parseRules(rawRules)
-      } catch {
-        // Fallback to default rules if Venice fails
-        parsedRules = {
-          hardConstraints: [
-            { type: 'budget', description: 'Weekly budget limit', value: 2 },
-            { type: 'timeWindow', description: '7-day delegation window', value: 604800 },
-          ],
-          softPreferences: [rawRules],
-        }
-      }
-
+      const parsedRules: ParsedRules = await parseRules(rawRules)
       setRules(parsedRules)
-      return NextResponse.json({ success: true, parsedRules })
+      return NextResponse.json({ success: true, parsedRules, veniceStatus: 'ok' })
     }
 
     case 'execute-task': {

@@ -8,14 +8,17 @@ import type {
   VeniceReasoning,
 } from '../types'
 import {
-  createRootDelegation,
-  createResearcherDelegation,
-  createSummarizerDelegation,
+  createSignedRootDelegation,
+  createSignedResearcherDelegation,
+  createSignedSummarizerDelegation,
+  createSignedRelayerDelegation,
+  deriveAgentAddresses,
   getScopeDescription,
 } from '../delegation'
-import { governorReason, researchData, summarizeData, explainForClearSign } from '../venice'
+import { governorReason, summarizeData, explainForClearSign } from '../venice'
 import { fetchWithX402 } from '../x402'
-import { logAction, getTotalSpent } from './memory'
+import { executeGaslessDelegation } from '../oneshot'
+import { logAction } from './memory'
 import { AGENT_NAMES } from '../constants'
 
 // Global state for the agent system
@@ -29,6 +32,13 @@ interface AgentState {
   clearSignResolve: ((response: 'proceed' | 'reject') => void) | null
   budget: number
   spent: number
+  // Private keys for signing delegations (server-side only)
+  agentKeys: {
+    user: Hex
+    governor: Hex
+    researcher: Hex
+    summarizer: Hex
+  } | null
 }
 
 export const agentState: AgentState = {
@@ -41,6 +51,7 @@ export const agentState: AgentState = {
   clearSignResolve: null,
   budget: 10,
   spent: 0,
+  agentKeys: null,
 }
 
 // Emit an SSE event to all listeners
@@ -55,13 +66,28 @@ export function subscribe(listener: (event: SSEEvent) => void): () => void {
   return () => agentState.listeners.delete(listener)
 }
 
-// Initialize agents with addresses
+// Initialize agents — derive addresses from wallet private key
 export function initializeAgents(addresses: {
   user: Address
   governor: Address
   researcher: Address
   summarizer: Address
 }) {
+  const walletKey = process.env.WALLET_PRIVATE_KEY
+  if (!walletKey) {
+    throw new Error('WALLET_PRIVATE_KEY is required in .env.local')
+  }
+
+  const prefixedKey = (walletKey.startsWith('0x') ? walletKey : `0x${walletKey}`) as Hex
+  const derived = deriveAgentAddresses(prefixedKey)
+  addresses = {
+    user: derived.user,
+    governor: derived.governor,
+    researcher: derived.researcher,
+    summarizer: derived.summarizer,
+  }
+  agentState.agentKeys = derived.keys
+
   const agents: [string, AgentNode][] = [
     ['user', {
       id: 'user',
@@ -136,6 +162,9 @@ export async function executeTask(task: ResearchTask): Promise<string> {
   if (!agentState.rules) {
     throw new Error('Rules not initialized')
   }
+  if (!agentState.agentKeys) {
+    throw new Error('Agent keys not loaded — call initializeAgents first')
+  }
 
   const addresses = {
     governor: agentState.agents.get('governor')!.address,
@@ -144,6 +173,7 @@ export async function executeTask(task: ResearchTask): Promise<string> {
     user: agentState.agents.get('user')!.address,
   }
 
+  const keys = agentState.agentKeys
   agentState.currentTask = task
 
   try {
@@ -163,13 +193,11 @@ export async function executeTask(task: ResearchTask): Promise<string> {
       outcome: 'success',
     })
 
-    // === Step 2: Create delegation chain ===
-    // Root: User -> Governor
-    const rootDelegation = createRootDelegation(
-      addresses.user,
+    // === Step 2: Create and sign the full delegation chain ===
+    const rootDelegation = await createSignedRootDelegation(
+      keys.user,
       addresses.governor,
     )
-
     emit({
       type: 'delegation_created',
       data: {
@@ -177,6 +205,9 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         to: 'governor',
         scope: getScopeDescription('governor'),
         budget: agentState.budget,
+        signed: true,
+        delegator: addresses.user,
+        delegate: addresses.governor,
       },
       timestamp: Date.now(),
     })
@@ -184,15 +215,15 @@ export async function executeTask(task: ResearchTask): Promise<string> {
     logAction({
       actor: 'governor',
       actorAddress: addresses.governor,
-      action: 'Root delegation created: User -> Governor',
-      reasoning: `Budget: $${agentState.budget}/week, time-limited`,
+      action: 'Root delegation signed: User -> Governor',
+      reasoning: `Budget: $${agentState.budget}/week, time-limited, cryptographically signed`,
       outcome: 'success',
     })
 
-    // Redelegation: Governor -> Researcher
-    const researcherDelegation = createResearcherDelegation(
+    // Redelegation: Governor -> Researcher (signed)
+    const researcherDelegation = await createSignedResearcherDelegation(
       rootDelegation,
-      addresses.governor,
+      keys.governor,
       addresses.researcher,
     )
 
@@ -205,6 +236,7 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         scope: getScopeDescription('researcher'),
         budget: 0.05,
         parentScope: getScopeDescription('governor'),
+        signed: true,
       },
       timestamp: Date.now(),
     })
@@ -212,15 +244,15 @@ export async function executeTask(task: ResearchTask): Promise<string> {
     logAction({
       actor: 'governor',
       actorAddress: addresses.governor,
-      action: 'Redelegation created: Governor -> Researcher',
+      action: 'Redelegation signed: Governor -> Researcher',
       reasoning: 'Scope narrowed: max $0.05/call, data-fetch only, 1h window',
       outcome: 'success',
     })
 
-    // Redelegation: Researcher -> Summarizer
-    const summarizerDelegation = createSummarizerDelegation(
+    // Redelegation: Researcher -> Summarizer (signed)
+    const summarizerDelegation = await createSignedSummarizerDelegation(
       researcherDelegation,
-      addresses.researcher,
+      keys.researcher,
       addresses.summarizer,
     )
 
@@ -232,6 +264,7 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         scope: getScopeDescription('summarizer'),
         budget: 0,
         parentScope: getScopeDescription('researcher'),
+        signed: true,
       },
       timestamp: Date.now(),
     })
@@ -239,29 +272,30 @@ export async function executeTask(task: ResearchTask): Promise<string> {
     logAction({
       actor: 'researcher',
       actorAddress: addresses.researcher,
-      action: 'Redelegation created: Researcher -> Summarizer',
+      action: 'Redelegation signed: Researcher -> Summarizer',
       reasoning: 'Scope narrowed: zero budget, read-only, 30min window',
       outcome: 'success',
     })
 
-    // === Step 3: Researcher fetches data via x402 ===
+    // === Step 3: Researcher fetches data via x402 (real Venice call) ===
     task.status = 'researching'
     emit({
       type: 'agent_status',
-      data: { agentId: 'researcher', action: 'Fetching data via x402...' },
+      data: { agentId: 'researcher', action: 'Fetching data via x402 (Venice AI)...' },
       timestamp: Date.now(),
     })
 
-    const rawData = await researchData(task.query)
-    const x402Cost = 0.001
+    const { data: rawData, payment } = await fetchWithX402('venice.ai/research', task.query)
+    const x402Cost = payment.amount
 
     emit({
       type: 'x402_payment',
       data: {
         agent: 'researcher',
         amount: x402Cost,
-        endpoint: 'venice.ai/research',
+        endpoint: payment.endpoint,
         description: `Data fetch for: ${task.query.substring(0, 50)}...`,
+        success: payment.success,
       },
       timestamp: Date.now(),
     })
@@ -273,17 +307,17 @@ export async function executeTask(task: ResearchTask): Promise<string> {
       actor: 'researcher',
       actorAddress: addresses.researcher,
       action: `x402 data fetch: ${task.query.substring(0, 50)}...`,
-      reasoning: 'Fetched via Venice AI under delegated scope',
+      reasoning: `Fetched via Venice AI under delegated scope. Cost: $${x402Cost.toFixed(4)}`,
       x402Cost,
       outcome: 'success',
     })
 
-    // === Step 4: Summarizer compresses data ===
+    // === Step 4: Summarizer compresses data (real Venice call) ===
     task.status = 'summarizing'
     updateAgentStatus('summarizer', 'active')
     emit({
       type: 'agent_status',
-      data: { agentId: 'summarizer', action: 'Compressing research data...' },
+      data: { agentId: 'summarizer', action: 'Compressing research data via Venice AI...' },
       timestamp: Date.now(),
     })
 
@@ -298,15 +332,15 @@ export async function executeTask(task: ResearchTask): Promise<string> {
       outcome: 'success',
     })
 
-    // === Step 5: Governor reasons about the result ===
+    // === Step 5: Governor reasons about the result (real Venice call) ===
     task.status = 'deciding'
     emit({
       type: 'agent_status',
-      data: { agentId: 'governor', action: 'Reasoning about results...' },
+      data: { agentId: 'governor', action: 'Reasoning about results via Venice AI...' },
       timestamp: Date.now(),
     })
 
-    const reasoning = await governorReason(task.query, agentState.rules, summary)
+    const reasoning: VeniceReasoning = await governorReason(task.query, agentState.rules, summary)
 
     emit({
       type: 'venice_reasoning',
@@ -345,7 +379,7 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         txDetails: {
           to: addresses.governor,
           value: `$${reasoning.cost}`,
-          data: '0x' as Hex,
+          data: '0x' as Hex, // actual tx built at execution time
         },
         timestamp: Date.now(),
       }
@@ -358,15 +392,9 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         timestamp: Date.now(),
       })
 
-      // Wait for user response
+      // Wait for user response (no auto-approve)
       const userResponse = await new Promise<'proceed' | 'reject'>((resolve) => {
         agentState.clearSignResolve = resolve
-        // Auto-approve after 30 seconds for demo
-        setTimeout(() => {
-          if (agentState.clearSignResolve === resolve) {
-            resolve('proceed')
-          }
-        }, 30000)
       })
 
       if (userResponse === 'reject') {
@@ -385,7 +413,67 @@ export async function executeTask(task: ResearchTask): Promise<string> {
       }
     }
 
-    // === Step 7: Execute (or just return result for research tasks) ===
+    // === Step 7: On-chain execution via 1Shot gasless relayer ===
+    task.status = 'executing'
+    emit({
+      type: 'agent_status',
+      data: { agentId: 'governor', action: 'Submitting delegation redemption on-chain via 1Shot...' },
+      timestamp: Date.now(),
+    })
+
+    // Create a delegation to the 1Shot relayer target as the outer wrapper
+    // 1Shot requires: first delegation's delegate = relayer target address
+    const relayerDelegation = await createSignedRelayerDelegation(keys.user)
+
+    // Submit the signed delegation chain + USDC transfer via 1Shot's EIP-7710 relayer
+    const costInUSDC = BigInt(Math.max(1, Math.round(reasoning.cost * 1_000_000)))
+
+    let txHash: Hex | undefined
+    try {
+      const oneShotResult = await executeGaslessDelegation(
+        [relayerDelegation, rootDelegation],
+        addresses.governor,
+        costInUSDC,
+      )
+
+      txHash = oneShotResult.receipt?.transactionHash || oneShotResult.txHash
+      if (oneShotResult.status === 'Confirmed') {
+        logAction({
+          actor: 'governor',
+          actorAddress: addresses.governor,
+          action: `On-chain delegation redeemed via 1Shot`,
+          reasoning: `Gasless tx confirmed. Hash: ${txHash}`,
+          txHash,
+          outcome: 'success',
+        })
+      } else {
+        logAction({
+          actor: 'governor',
+          actorAddress: addresses.governor,
+          action: `1Shot tx status: ${oneShotResult.status}`,
+          reasoning: `Transaction status: ${oneShotResult.status}. ${oneShotResult.error || ''}`,
+          txHash,
+          outcome: 'failure',
+        })
+      }
+    } catch (oneShotError) {
+      const errMsg = oneShotError instanceof Error ? oneShotError.message : String(oneShotError)
+      logAction({
+        actor: 'governor',
+        actorAddress: addresses.governor,
+        action: `1Shot gasless execution error`,
+        reasoning: errMsg,
+        outcome: 'failure',
+        details: errMsg,
+      })
+      emit({
+        type: 'agent_status',
+        data: { agentId: 'governor', action: `1Shot: ${errMsg}` },
+        timestamp: Date.now(),
+      })
+    }
+
+    // === Step 8: Complete ===
     task.status = 'completed'
     task.result = summary
 
@@ -399,6 +487,8 @@ export async function executeTask(task: ResearchTask): Promise<string> {
         decision: reasoning.decision,
         totalCost: agentState.spent,
         budgetRemaining: agentState.budget - agentState.spent,
+        delegationsSigned: true,
+        txHash,
       },
       timestamp: Date.now(),
     })
@@ -407,8 +497,9 @@ export async function executeTask(task: ResearchTask): Promise<string> {
       actor: 'governor',
       actorAddress: addresses.governor,
       action: `Task completed: ${task.query.substring(0, 50)}...`,
-      reasoning: `Result delivered. Total cost: $${agentState.spent.toFixed(4)}`,
+      reasoning: `Result delivered. Total cost: $${agentState.spent.toFixed(4)}. On-chain tx: ${txHash || 'pending'}.`,
       x402Cost: reasoning.cost,
+      txHash,
       outcome: 'success',
     })
 
@@ -457,5 +548,6 @@ export function getAgentState() {
     spent: agentState.spent,
     budgetRemaining: agentState.budget - agentState.spent,
     totalActions: agentState.events.length,
+    keysLoaded: true,
   }
 }

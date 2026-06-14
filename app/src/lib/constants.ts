@@ -4,26 +4,34 @@ import { baseSepolia, base } from 'viem/chains'
 export const TESTNET_CHAIN = baseSepolia
 export const MAINNET_CHAIN = base
 
-// Use testnet for development, switch to mainnet for submission
-export const ACTIVE_CHAIN = baseSepolia
+// Use mainnet for submission (1Shot only supports Base mainnet)
+export const ACTIVE_CHAIN = base
+
+// RPC URLs (from env, with public fallbacks)
+export const BASE_SEPOLIA_RPC = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
+export const BASE_MAINNET_RPC = process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org'
+export const ACTIVE_RPC = BASE_MAINNET_RPC
 
 // Venice AI
 export const VENICE_API_URL = 'https://api.venice.ai/api/v1'
 export const VENICE_MODEL = 'llama-3.3-70b'
 
 // 1Shot Relayer
-export const ONESHOT_ENDPOINT = 'https://relayer.1shotapi.com/relayers'
+export const ONESHOT_ENDPOINT = process.env.ONESHOT_RELAYER_URL || 'https://relayer.1shotapi.com/relayers'
+
+// 1Shot relayer target address (required as outer delegate for 7710 transactions)
+export const ONESHOT_RELAYER_TARGET = '0x26a529124f0bbf9af9d8f9f84a43efe47cf1199a' as const
 
 // USDC on Base Sepolia (test) and Base Mainnet
 export const USDC_ADDRESS_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as const
 export const USDC_ADDRESS_MAINNET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const
-export const USDC_ADDRESS = USDC_ADDRESS_SEPOLIA
+export const USDC_ADDRESS = USDC_ADDRESS_MAINNET
 export const USDC_DECIMALS = 6
 
 // Default budget and delegation settings
 export const DEFAULT_WEEKLY_BUDGET = 10_000_000n // 10 USDC (6 decimals)
 export const RESEARCHER_MAX_PER_CALL = 50_000n   // $0.05 per call
-export const SUMMARIZER_BUDGET = 0n               // Zero budget — read-only
+export const SUMMARIZER_BUDGET = 1n               // 1 wei USDC (~$0.000001) — effectively read-only
 export const DEFAULT_EXPIRY_SECONDS = 7 * 24 * 60 * 60 // 7 days
 
 // Agent names for display

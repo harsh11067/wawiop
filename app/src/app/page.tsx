@@ -20,10 +20,12 @@ export default function Home() {
   const [isInitializing, setIsInitializing] = useState(false)
   const [addresses, setAddresses] = useState<Record<string, Address>>({})
   const [error, setError] = useState<string | null>(null)
+  const [isDemoMode, setIsDemoMode] = useState(false)
 
   // Initialize agents on the server once wallet is connected
-  const initializeOnServer = useCallback(async (walletAddr: Address) => {
+  const initializeOnServer = useCallback(async (walletAddr?: Address) => {
     setIsInitializing(true)
+    setError(null)
     try {
       const res = await fetch('/api/agent', {
         method: 'POST',
@@ -31,14 +33,17 @@ export default function Home() {
         body: JSON.stringify({
           action: 'initialize',
           addresses: {
-            user: walletAddr,
-            governor: walletAddr,
-            researcher: walletAddr,
-            summarizer: walletAddr,
+            user: walletAddr || '0x0000000000000000000000000000000000000000',
+            governor: walletAddr || '0x0000000000000000000000000000000000000000',
+            researcher: walletAddr || '0x0000000000000000000000000000000000000000',
+            summarizer: walletAddr || '0x0000000000000000000000000000000000000000',
           },
         }),
       })
       const data = await res.json()
+      if (data.error) {
+        throw new Error(data.error)
+      }
       if (data.addresses) {
         setAddresses(data.addresses)
       }
@@ -59,6 +64,13 @@ export default function Home() {
 
   const handleConnect = () => {
     setError(null)
+
+    // If wallet is already connected, just initialize
+    if (isConnected && address) {
+      initializeOnServer(address)
+      return
+    }
+
     // Find the MetaMask connector from our wagmi config
     const mmConnector = connectors.find(
       (c) => c.id === 'io.metamask' || c.id === 'metaMask' || c.name === 'MetaMask'
@@ -72,6 +84,59 @@ export default function Home() {
     }
   }
 
+  const handleDemoMode = async () => {
+    setIsDemoMode(true)
+    setError(null)
+    setIsInitializing(true)
+    try {
+      // Initialize agents on server (uses WALLET_PRIVATE_KEY from env)
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'initialize',
+          addresses: {
+            user: '0x0000000000000000000000000000000000000000',
+            governor: '0x0000000000000000000000000000000000000000',
+            researcher: '0x0000000000000000000000000000000000000000',
+            summarizer: '0x0000000000000000000000000000000000000000',
+          },
+        }),
+      })
+      const data = await res.json()
+      if (data.addresses) {
+        setAddresses(data.addresses)
+      }
+
+      // Set demo rules automatically
+      await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set-rules',
+          rules: 'Maximum $10 per week budget. No single transaction above $2. Only allow research and data-fetching tasks. Prefer conservative low-cost operations. Escalate to ClearSign for anything above $0.50. Block swaps, bridges, and leverage positions.',
+        }),
+      })
+
+      // Save state and go to command center
+      localStorage.setItem(
+        'vectis-state',
+        JSON.stringify({
+          walletAddress: data.addresses?.user || addresses.user,
+          rules: null,
+          addresses: data.addresses || addresses,
+          demoMode: true,
+        })
+      )
+
+      router.push('/command-center')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start demo')
+    } finally {
+      setIsInitializing(false)
+    }
+  }
+
   const handleRulesParsed = (rules: ParsedRules) => {
     setParsedRules(rules)
     setStep('signing')
@@ -82,10 +147,21 @@ export default function Home() {
     setError(null)
 
     try {
-      // Request ERC-7715 Advanced Permissions via MetaMask Flask
-      if (!walletClient) {
-        throw new Error('Wallet client not available — reconnect MetaMask')
+      // In demo mode, skip MetaMask signing and go straight to command center
+      if (isDemoMode || !walletClient) {
+        localStorage.setItem(
+          'vectis-state',
+          JSON.stringify({
+            walletAddress: address || addresses.user,
+            rules: parsedRules,
+            addresses,
+            demoMode: isDemoMode,
+          })
+        )
+        router.push('/command-center')
+        return
       }
+
       if (!addresses.governor) {
         throw new Error('Governor address not loaded — reinitialize agents')
       }
@@ -138,6 +214,20 @@ export default function Home() {
     } finally {
       setIsSigning(false)
     }
+  }
+
+  // In signing step, allow skipping MetaMask for demo
+  const handleSkipToCommandCenter = () => {
+    localStorage.setItem(
+      'vectis-state',
+      JSON.stringify({
+        walletAddress: address || addresses.user,
+        rules: parsedRules,
+        addresses,
+        demoMode: true,
+      })
+    )
+    router.push('/command-center')
   }
 
   const displayAddress = address || addresses.user
@@ -260,11 +350,40 @@ export default function Home() {
               >
                 {isInitializing
                   ? 'Initializing agents...'
-                  : 'Connect MetaMask Wallet'}
+                  : isConnected
+                    ? 'Continue with Connected Wallet'
+                    : 'Connect MetaMask Wallet'}
               </button>
-              {(error || connectErr) && (
+
+              {/* Demo mode button */}
+              <div className="mt-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1 h-px" style={{ backgroundColor: THEME.border }} />
+                  <span className="text-xs" style={{ color: THEME.textMuted }}>or</span>
+                  <div className="flex-1 h-px" style={{ backgroundColor: THEME.border }} />
+                </div>
+                <button
+                  onClick={handleDemoMode}
+                  disabled={isInitializing}
+                  className="w-full py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 border"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: THEME.cyan,
+                    borderColor: THEME.cyan,
+                  }}
+                >
+                  {isInitializing && isDemoMode
+                    ? 'Starting demo...'
+                    : 'Launch Live Demo'}
+                </button>
+                <p className="text-xs mt-2" style={{ color: THEME.textMuted }}>
+                  Full agent pipeline with real delegation signing, Venice AI reasoning, and 1Shot execution flow
+                </p>
+              </div>
+
+              {error && (
                 <p className="text-xs mt-3" style={{ color: THEME.red }}>
-                  {error || connectErr?.message}
+                  {error}
                 </p>
               )}
             </div>
@@ -394,6 +513,19 @@ export default function Home() {
                 {isSigning
                   ? 'Requesting permission from MetaMask...'
                   : 'Sign & Enter Command Center'}
+              </button>
+
+              {/* Skip option for demo or when MetaMask isn't available */}
+              <button
+                onClick={handleSkipToCommandCenter}
+                className="w-full mt-3 py-2 rounded-lg text-xs transition-colors border"
+                style={{
+                  backgroundColor: 'transparent',
+                  color: THEME.textMuted,
+                  borderColor: THEME.border,
+                }}
+              >
+                Skip signing (use server-side delegations only)
               </button>
 
               {error && (

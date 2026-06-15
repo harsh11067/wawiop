@@ -156,6 +156,24 @@ Full guide: [`app/scripts/README.md`](./app/scripts/README.md).
 
 ---
 
+## Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/harsh11067/wawiop&root-directory=app&project-name=wawiop&env=ACTIVE_CHAIN_ID,WALLET_PRIVATE_KEY,VENICE_API_KEY,BASE_SEPOLIA_RPC_URL&envDescription=Testnet%20signer%20%2B%20Venice%20key%20(see%20.env.example))
+
+1. **Import** `wawiop` at [vercel.com/new](https://vercel.com/new) (or use the button) and set **Root Directory = `app`**.
+2. Add environment variables (server-side; see [`.env.example`](./app/.env.example)):
+   - `ACTIVE_CHAIN_ID=84532`
+   - `WALLET_PRIVATE_KEY` — a **testnet** key (optional; without it the app uses an ephemeral signer and still renders + proves chain linkage)
+   - `VENICE_API_KEY` — optional (no credits → deterministic fallback)
+   - `BASE_SEPOLIA_RPC_URL` — optional (public fallback used otherwise)
+3. **Deploy.** Every push to `main` auto-deploys.
+
+The UI, the interactive chain, the demo beats, and the live `eth_call` on-chain
+simulations all work on a fresh deploy; add `WALLET_PRIVATE_KEY` (funded testnet
+account) for fully settled redemptions.
+
+---
+
 ## Honest status
 
 - **Base Sepolia** is the default (real on-chain redemption). 1Shot is mainnet-only, so on testnet the app redeems directly via the `DelegationManager`.

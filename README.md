@@ -12,7 +12,24 @@
 
 *MetaMask Smart Accounts Kit · Venice AI · 1Shot Relayer · Base*
 
+### ▶ Live demo — **[wawiop.vercel.app](https://wawiop.vercel.app)**
+
 </div>
+
+> The hosted link is the polished UI showcase. The **full stateful agent pipeline** (live SSE updates, the running loop) is best seen locally with `npm run dev` — Vercel's serverless functions don't persist the in-memory agent state or run fire-and-forget work between requests. The **on-chain proofs run anywhere** via `node app/scripts/prove-all.mjs`.
+
+## On-chain addresses (Base Sepolia · chainId 84532)
+
+| What | Address |
+|---|---|
+| **DelegationManager** (validates & redeems the chain) | [`0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3`](https://sepolia.basescan.org/address/0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3) |
+| **User Smart Account** (EIP-7702 DeleGator, holds the budget) | [`0xC2B7C2B9C923941A14b3e1f42897b1769EEA28C3`](https://sepolia.basescan.org/address/0xC2B7C2B9C923941A14b3e1f42897b1769EEA28C3) |
+| **EIP-7702 Stateless DeleGator impl** | [`0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B`](https://sepolia.basescan.org/address/0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B) |
+| **USDC** (the delegated asset) | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036CbD53842c5426634e7929541eC2318f3dCF7e) |
+
+> Vectis does **not** deploy a bespoke Solidity contract — by design it uses MetaMask's audited
+> delegation framework: the `DelegationManager` plus its caveat enforcers (e.g.
+> `ERC20TransferAmountEnforcer`) do the on-chain validation and attenuation.
 
 ---
 

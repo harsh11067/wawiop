@@ -15,7 +15,12 @@ import type { ResearchTask, ParsedRules } from '@/lib/types'
 
 // POST /api/agent — handle agent actions
 export async function POST(request: NextRequest) {
-  const body = await request.json()
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    body = {}
+  }
   const { action } = body
 
   switch (action) {

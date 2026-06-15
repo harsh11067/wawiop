@@ -139,7 +139,10 @@ The app starts at the wallet connection screen. Connect MetaMask or click **"Lau
 
 ## Key Invariant (What Judges Should Test)
 
-Submit a redemption that attempts to exceed a child's caveat — bypassing the agent code entirely — and it **reverts on-chain**. The enforcement is cryptographic, not policy. See [`docs/test-plan.md`](./docs/test-plan.md) for the full assertion matrix.
+Submit a redemption that attempts to exceed a child's caveat — bypassing the agent code entirely — and it **reverts on-chain**. The enforcement is cryptographic, not policy. 
+
+- [docs/test-plan.md](./docs/test-plan.md) — Assertion parameters for testing invariants (e.g., child overspend).
+- [docs/FEEDBACK.md](./docs/FEEDBACK.md) — Detailed developer feedback on MetaMask Kit, 1Shot Relayer, and Venice AI APIs.
 
 ---
 

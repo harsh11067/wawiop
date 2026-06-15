@@ -11,6 +11,7 @@ import {
   restoreChain,
   runUnsafeAction,
   runProposalVote,
+  resolveUserKey,
 } from '@/lib/agents/governor'
 import { deriveAgentAddresses } from '@/lib/delegation'
 import { parseRules } from '@/lib/venice'
@@ -38,16 +39,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const walletKey = process.env.WALLET_PRIVATE_KEY
-      if (!walletKey) {
-        return NextResponse.json(
-          { error: 'WALLET_PRIVATE_KEY is required in .env.local' },
-          { status: 500 }
-        )
-      }
-
-      const prefixedKey = (walletKey.startsWith('0x') ? walletKey : `0x${walletKey}`) as Hex
-      const derived = deriveAgentAddresses(prefixedKey)
+      const derived = deriveAgentAddresses(resolveUserKey())
       initializeAgents(derived)
       return NextResponse.json({
         success: true,
@@ -63,15 +55,7 @@ export async function POST(request: NextRequest) {
     }
 
     case 'get-addresses': {
-      const addrKey = process.env.WALLET_PRIVATE_KEY
-      if (!addrKey) {
-        return NextResponse.json(
-          { error: 'WALLET_PRIVATE_KEY is required in .env.local' },
-          { status: 500 }
-        )
-      }
-      const addrPrefixed = (addrKey.startsWith('0x') ? addrKey : `0x${addrKey}`) as Hex
-      const derived = deriveAgentAddresses(addrPrefixed)
+      const derived = deriveAgentAddresses(resolveUserKey())
       return NextResponse.json({
         user: derived.user,
         governor: derived.governor,

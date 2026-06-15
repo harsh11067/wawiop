@@ -1,4 +1,5 @@
 import type { Address, Hex } from 'viem'
+import { generatePrivateKey } from 'viem/accounts'
 import type {
   ResearchTask,
   ParsedRules,
@@ -62,6 +63,21 @@ export const agentState: AgentState = {
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Resolve the User signing key. Uses WALLET_PRIVATE_KEY when set; otherwise mints
+// a stable ephemeral key so a no-secret (e.g. public) deploy still renders, signs,
+// and proves chain linkage — only real on-chain settlement needs a funded key.
+let ephemeralUserKey: Hex | null = null
+export function resolveUserKey(): Hex {
+  const k = process.env.WALLET_PRIVATE_KEY
+  if (k && k.length > 10) return (k.startsWith('0x') ? k : `0x${k}`) as Hex
+  if (!ephemeralUserKey) ephemeralUserKey = generatePrivateKey()
+  return ephemeralUserKey
+}
+export function hasRealUserKey(): boolean {
+  const k = process.env.WALLET_PRIVATE_KEY
+  return !!(k && k.length > 10)
+}
 
 // Animate a packet of authority flowing along a chain edge
 function emitPulse(edge: ChainEdge, color: string) {
@@ -127,13 +143,7 @@ export function initializeAgents(addresses: {
   researcher: Address
   summarizer: Address
 }) {
-  const walletKey = process.env.WALLET_PRIVATE_KEY
-  if (!walletKey) {
-    throw new Error('WALLET_PRIVATE_KEY is required in .env.local')
-  }
-
-  const prefixedKey = (walletKey.startsWith('0x') ? walletKey : `0x${walletKey}`) as Hex
-  const derived = deriveAgentAddresses(prefixedKey)
+  const derived = deriveAgentAddresses(resolveUserKey())
   addresses = {
     user: derived.user,
     governor: derived.governor,

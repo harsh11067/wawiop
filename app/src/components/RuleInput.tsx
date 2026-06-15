@@ -3,16 +3,18 @@
 import { useState } from 'react'
 import type { ParsedRules } from '@/lib/types'
 import { THEME } from '@/lib/constants'
+import { Pill } from './ui'
 
 interface RuleInputProps {
   onRulesParsed: (rules: ParsedRules, rawRules: string) => void
   isLoading?: boolean
 }
 
-const DEFAULT_RULES = `Research topics I approve. Max $2/week on data.
-Never act without my ClearSign on transactions above $0.50.
-Focus on Base ecosystem projects and grant activity.
-Prefer conservative spending — only pay for data when the task requires it.`
+const DEFAULT_RULES = `Never spend more than $10 a week.
+No single action over $5.
+Only pay services on my allowlist.
+Prefer free sources before paid ones.
+Be skeptical of anything promising yield above 8%.`
 
 export default function RuleInput({ onRulesParsed, isLoading }: RuleInputProps) {
   const [rules, setRules] = useState(DEFAULT_RULES)
@@ -40,70 +42,76 @@ export default function RuleInput({ onRulesParsed, isLoading }: RuleInputProps) 
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <label className="block text-sm mb-2" style={{ color: THEME.text }}>
-          Give your wallet opinions
-        </label>
-        <textarea
-          value={rules}
-          onChange={(e) => setRules(e.target.value)}
-          className="w-full rounded-lg p-4 text-sm focus:outline-none focus:ring-2 resize-none"
-          style={{
-            backgroundColor: THEME.bg,
-            color: THEME.text,
-            borderColor: THEME.border,
-            border: `1px solid ${THEME.border}`,
-            minHeight: 120,
-          }}
-          placeholder="Type your rules in plain English..."
-        />
-      </div>
+    <div className="flex flex-col gap-4">
+      <textarea
+        value={rules}
+        onChange={(e) => setRules(e.target.value)}
+        className="w-full font-display"
+        style={{
+          fontStyle: 'italic',
+          fontSize: 16,
+          lineHeight: 1.5,
+          color: THEME.textSoft,
+          background: THEME.bgNode,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 12,
+          padding: 16,
+          minHeight: 140,
+          resize: 'none',
+          outline: 'none',
+        }}
+        placeholder="Type your rules in plain English…"
+      />
 
       <button
         onClick={handleParse}
         disabled={parsing || isLoading || !rules.trim()}
-        className="w-full py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+        className="font-mono"
         style={{
-          backgroundColor: parsing ? THEME.bgCard : THEME.amber,
-          color: THEME.bg,
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 1,
+          padding: '13px',
+          borderRadius: 10,
+          border: 'none',
+          cursor: parsing ? 'default' : 'pointer',
+          background: parsing ? THEME.bgNode : THEME.amber,
+          color: parsing ? THEME.textFaint : '#0B0708',
+          opacity: !rules.trim() ? 0.5 : 1,
         }}
       >
-        {parsing ? 'Venice AI is parsing your rules...' : 'Parse Rules with Venice AI'}
+        {parsing ? 'VENICE AI IS PARSING…' : 'PARSE RULES WITH VENICE AI'}
       </button>
 
-      {/* Show parsed rules split */}
       {parsedRules && (
-        <div className="space-y-3">
-          {/* Hard constraints (green) */}
+        <div className="flex flex-col gap-3 animate-fade-up">
           <div>
-            <div className="text-xs font-medium mb-1" style={{ color: THEME.green }}>
-              Hard Constraints (on-chain caveats)
+            <div className="mono-label" style={{ color: THEME.cyan, letterSpacing: 1.8 }}>
+              ENFORCED ON-CHAIN — CAVEATS
             </div>
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1.5" style={{ marginTop: 8 }}>
               {parsedRules.hardConstraints.map((c, i) => (
                 <div
                   key={i}
-                  className="text-xs px-3 py-1.5 rounded"
-                  style={{ backgroundColor: `${THEME.green}15`, color: THEME.green }}
+                  className="flex items-center justify-between gap-2"
+                  style={{ background: 'rgba(98,217,232,0.06)', borderRadius: 8, padding: '8px 10px' }}
                 >
-                  {c.type}: {c.description} ({JSON.stringify(c.value)})
+                  <span style={{ fontSize: 12, color: THEME.textSoft }}>{c.description}</span>
+                  <Pill tone="hard">{c.type}</Pill>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Soft preferences (grey) */}
           <div>
-            <div className="text-xs font-medium mb-1" style={{ color: THEME.textMuted }}>
-              Soft Preferences (reasoning guidance)
+            <div className="mono-label" style={{ color: THEME.amber, letterSpacing: 1.8 }}>
+              REASONED — GOVERNOR GUIDANCE
             </div>
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1.5" style={{ marginTop: 8 }}>
               {parsedRules.softPreferences.map((p, i) => (
                 <div
                   key={i}
-                  className="text-xs px-3 py-1.5 rounded"
-                  style={{ backgroundColor: `${THEME.textMuted}15`, color: THEME.textMuted }}
+                  style={{ fontSize: 12, color: THEME.textMuted, background: 'rgba(242,181,68,0.05)', borderRadius: 8, padding: '8px 10px' }}
                 >
                   {p}
                 </div>

@@ -1,70 +1,125 @@
 'use client'
 
-import type { ActionLogEntry } from '@/lib/types'
-import { THEME, AGENT_NAMES } from '@/lib/constants'
+import type { ActionLogEntry, AgentRole } from '@/lib/types'
+import { THEME, ROLE_COLOR } from '@/lib/constants'
+import { Card, SectionLabel } from './ui'
+import { BASE_EXPLORER_TX } from '@/lib/constants'
 
 interface MemoryLogProps {
   entries: ActionLogEntry[]
 }
 
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
+const OUTCOME_COLOR: Record<string, string> = {
+  success: THEME.green,
+  failure: THEME.red,
+  rejected: THEME.red,
+  pending: THEME.amber,
+}
+
+function actorChip(actor: AgentRole) {
+  const color = ROLE_COLOR[actor] ?? THEME.textMuted
+  return (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 8.5,
+        fontWeight: 600,
+        letterSpacing: 1,
+        padding: '2px 5px',
+        borderRadius: 4,
+        background: `${color}1f`,
+        color,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {actor.toUpperCase()}
+    </span>
+  )
+}
+
 export default function MemoryLog({ entries }: MemoryLogProps) {
-  const outcomeColors: Record<string, string> = {
-    success: THEME.green,
-    failure: THEME.red,
-    pending: THEME.amber,
-    rejected: THEME.red,
-  }
+  const ordered = [...entries].reverse()
 
   return (
-    <div
-      className="rounded-xl border p-4 h-full overflow-auto"
-      style={{ backgroundColor: THEME.bgCard, borderColor: THEME.border }}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-semibold text-sm" style={{ color: THEME.text }}>
-          Memory (Action Log)
-        </span>
-        <span className="text-xs" style={{ color: THEME.textMuted }}>
-          {entries.length} actions
-        </span>
-      </div>
+    <Card style={{ paddingBottom: 8 }}>
+      <SectionLabel right={`${entries.length} ENTRIES`}>MEMORY — ACTION LOG</SectionLabel>
 
-      <div className="space-y-1">
-        {entries.length === 0 ? (
-          <div className="text-xs text-center py-4" style={{ color: THEME.textMuted }}>
+      <div style={{ marginTop: 4, maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
+        {ordered.length === 0 ? (
+          <div
+            className="font-mono"
+            style={{ fontSize: 10, color: THEME.textFaint, padding: '24px 0', textAlign: 'center' }}
+          >
             No actions recorded yet.
           </div>
         ) : (
-          [...entries].reverse().map((entry) => (
+          ordered.map((e) => (
             <div
-              key={entry.id}
-              className="flex items-center gap-2 text-xs py-1.5 border-b"
-              style={{ borderColor: `${THEME.border}80` }}
+              key={e.id}
+              className="animate-fade-up"
+              style={{ padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
             >
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ backgroundColor: outcomeColors[entry.outcome] }}
-              />
-              <span className="shrink-0 font-medium" style={{ color: THEME.amber }}>
-                {AGENT_NAMES[entry.actor]}
-              </span>
-              <span className="truncate" style={{ color: THEME.text }}>
-                {entry.action}
-              </span>
-              {entry.x402Cost > 0 && (
-                <span className="shrink-0" style={{ color: THEME.amber }}>
-                  ${entry.x402Cost.toFixed(4)}
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono" style={{ fontSize: 9, color: THEME.textFaint }}>
+                  {formatTime(e.timestamp)}
                 </span>
+                {actorChip(e.actor)}
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: OUTCOME_COLOR[e.outcome] ?? THEME.textFaint,
+                    display: 'inline-block',
+                  }}
+                />
+                {e.x402Cost > 0 && (
+                  <span
+                    className="font-mono"
+                    style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 600, color: THEME.amber }}
+                  >
+                    ${e.x402Cost.toFixed(4)}
+                  </span>
+                )}
+              </div>
+              <div
+                style={{ marginTop: 5, fontSize: 11.5, lineHeight: 1.5, color: THEME.textSoft }}
+              >
+                {e.action}
+              </div>
+              {e.reasoning && e.reasoning !== e.action && (
+                <div style={{ marginTop: 2, fontSize: 11, lineHeight: 1.5, color: THEME.textMuted }}>
+                  {e.reasoning}
+                </div>
               )}
-              {entry.txHash && (
-                <span className="shrink-0 font-mono" style={{ color: THEME.cyan }}>
-                  {entry.txHash.slice(0, 8)}...
+              {e.txHash && /^0x[0-9a-fA-F]{64}$/.test(e.txHash) ? (
+                <a
+                  href={`${BASE_EXPLORER_TX}${e.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono"
+                  style={{ fontSize: 9, lineHeight: 1.8, color: THEME.cyan, textDecoration: 'none' }}
+                >
+                  {e.txHash.slice(0, 18)}… ↗
+                </a>
+              ) : e.txHash ? (
+                <span className="font-mono" style={{ fontSize: 9, lineHeight: 1.8, color: THEME.textFaint }}>
+                  {e.txHash} · scenario ref
                 </span>
-              )}
+              ) : null}
             </div>
           ))
         )}
       </div>
-    </div>
+    </Card>
   )
 }

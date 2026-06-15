@@ -7,6 +7,10 @@ import {
   setRules,
   resolveClearSign,
   getAgentState,
+  revokeChain,
+  restoreChain,
+  runUnsafeAction,
+  runProposalVote,
 } from '@/lib/agents/governor'
 import { deriveAgentAddresses } from '@/lib/delegation'
 import { parseRules } from '@/lib/venice'
@@ -104,6 +108,26 @@ export async function POST(request: NextRequest) {
     case 'clearsign-response': {
       const { response } = body as { response: 'proceed' | 'reject' }
       resolveClearSign(response)
+      return NextResponse.json({ success: true })
+    }
+
+    case 'beat-vote': {
+      runProposalVote().catch((e) => console.error('vote beat error:', e))
+      return NextResponse.json({ success: true })
+    }
+
+    case 'beat-unsafe': {
+      runUnsafeAction().catch((e) => console.error('unsafe beat error:', e))
+      return NextResponse.json({ success: true })
+    }
+
+    case 'revoke': {
+      revokeChain().catch((e) => console.error('revoke error:', e))
+      return NextResponse.json({ success: true })
+    }
+
+    case 'restore': {
+      restoreChain()
       return NextResponse.json({ success: true })
     }
 

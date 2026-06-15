@@ -1,0 +1,25 @@
+
+=== VECTIS — REAL BACKEND PROOFS · Base Sepolia (84532) ===
+DelegationManager: 0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+User SA: 0xC2B7C2B9C923941A14b3e1f42897b1769EEA28C3   USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+
+1) LINKED ERC-7710 CHAIN (signed + cryptographically linked)
+  ✅ root authority == ROOT (0xffffffffff…)
+  ✅ Researcher.authority == hash(root)  0x1bd94975c2…
+  ✅ Summarizer.authority == hash(Researcher)  0xbe8464cbc7…
+  ✅ every hop carries a 65-byte ECDSA signature
+
+2) VALID REDEMPTION — eth_call against the live DelegationManager
+  ✅ redeem 0.10 USDC SIMULATION SUCCEEDED — chain is valid & redeemable on-chain
+
+3) CAVEAT ENFORCEMENT — over-budget redemption REVERTS on-chain
+  ✅ reverted: Execution reverted with reason: ERC20TransferAmountEnforcer:allowance-exceeded.
+
+4) x402 PAYMENT — EIP-3009 signed by Researcher, signature verified
+  ✅ payment signature recovers to Researcher 0xD94d01B6CA…
+
+5) VENICE AI
+  ℹ️  key valid · NO CREDITS → app falls back deterministically (add credits to go live)
+
+=== 7/7 cryptographic/on-chain checks passed ===
+

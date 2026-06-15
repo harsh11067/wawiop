@@ -1,551 +1,191 @@
-'use client'
+import Link from 'next/link'
+import HeroCanvas from '@/components/HeroCanvas'
+import { THEME } from '@/lib/constants'
 
-import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAccount, useConnect, useWalletClient } from 'wagmi'
-import RuleInput from '@/components/RuleInput'
-import { THEME, USDC_ADDRESS, ACTIVE_CHAIN } from '@/lib/constants'
-import type { ParsedRules } from '@/lib/types'
-import type { Address, Hex } from 'viem'
+const mono = { fontFamily: 'var(--font-mono), monospace' }
+const display = { fontFamily: 'var(--font-display), Georgia, serif' }
 
-export default function Home() {
-  const router = useRouter()
-  const { address, isConnected } = useAccount()
-  const { connect, connectors, error: connectErr } = useConnect()
-  const { data: walletClient } = useWalletClient()
-
-  const [step, setStep] = useState<'connect' | 'rules' | 'signing'>('connect')
-  const [parsedRules, setParsedRules] = useState<ParsedRules | null>(null)
-  const [isSigning, setIsSigning] = useState(false)
-  const [isInitializing, setIsInitializing] = useState(false)
-  const [addresses, setAddresses] = useState<Record<string, Address>>({})
-  const [error, setError] = useState<string | null>(null)
-  const [isDemoMode, setIsDemoMode] = useState(false)
-
-  // Initialize agents on the server once wallet is connected
-  const initializeOnServer = useCallback(async (walletAddr?: Address) => {
-    setIsInitializing(true)
-    setError(null)
-    try {
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'initialize',
-          addresses: {
-            user: walletAddr || '0x0000000000000000000000000000000000000000',
-            governor: walletAddr || '0x0000000000000000000000000000000000000000',
-            researcher: walletAddr || '0x0000000000000000000000000000000000000000',
-            summarizer: walletAddr || '0x0000000000000000000000000000000000000000',
-          },
-        }),
-      })
-      const data = await res.json()
-      if (data.error) {
-        throw new Error(data.error)
-      }
-      if (data.addresses) {
-        setAddresses(data.addresses)
-      }
-      setStep('rules')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to initialize agents')
-    } finally {
-      setIsInitializing(false)
-    }
-  }, [])
-
-  // Auto-advance if wallet is already connected (page reload)
-  useEffect(() => {
-    if (isConnected && address && step === 'connect') {
-      initializeOnServer(address)
-    }
-  }, [isConnected, address, step, initializeOnServer])
-
-  const handleConnect = () => {
-    setError(null)
-
-    // If wallet is already connected, just initialize
-    if (isConnected && address) {
-      initializeOnServer(address)
-      return
-    }
-
-    // Find the MetaMask connector from our wagmi config
-    const mmConnector = connectors.find(
-      (c) => c.id === 'io.metamask' || c.id === 'metaMask' || c.name === 'MetaMask'
-    )
-    if (mmConnector) {
-      connect({ connector: mmConnector })
-    } else if (connectors.length > 0) {
-      connect({ connector: connectors[0] })
-    } else {
-      setError('No wallet connector found. Install MetaMask Flask.')
-    }
-  }
-
-  const handleDemoMode = async () => {
-    setIsDemoMode(true)
-    setError(null)
-    setIsInitializing(true)
-    try {
-      // Initialize agents on server (uses WALLET_PRIVATE_KEY from env)
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'initialize',
-          addresses: {
-            user: '0x0000000000000000000000000000000000000000',
-            governor: '0x0000000000000000000000000000000000000000',
-            researcher: '0x0000000000000000000000000000000000000000',
-            summarizer: '0x0000000000000000000000000000000000000000',
-          },
-        }),
-      })
-      const data = await res.json()
-      if (data.addresses) {
-        setAddresses(data.addresses)
-      }
-
-      // Set demo rules automatically
-      await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'set-rules',
-          rules: 'Maximum $10 per week budget. No single transaction above $2. Only allow research and data-fetching tasks. Prefer conservative low-cost operations. Escalate to ClearSign for anything above $0.50. Block swaps, bridges, and leverage positions.',
-        }),
-      })
-
-      // Save state and go to command center
-      localStorage.setItem(
-        'vectis-state',
-        JSON.stringify({
-          walletAddress: data.addresses?.user || addresses.user,
-          rules: null,
-          addresses: data.addresses || addresses,
-          demoMode: true,
-        })
-      )
-
-      router.push('/command-center')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start demo')
-    } finally {
-      setIsInitializing(false)
-    }
-  }
-
-  const handleRulesParsed = (rules: ParsedRules) => {
-    setParsedRules(rules)
-    setStep('signing')
-  }
-
-  const handleSignDelegation = async () => {
-    setIsSigning(true)
-    setError(null)
-
-    try {
-      // In demo mode, skip MetaMask signing and go straight to command center
-      if (isDemoMode || !walletClient) {
-        localStorage.setItem(
-          'vectis-state',
-          JSON.stringify({
-            walletAddress: address || addresses.user,
-            rules: parsedRules,
-            addresses,
-            demoMode: isDemoMode,
-          })
-        )
-        router.push('/command-center')
-        return
-      }
-
-      if (!addresses.governor) {
-        throw new Error('Governor address not loaded — reinitialize agents')
-      }
-
-      const { erc7715ProviderActions } = await import(
-        '@metamask/smart-accounts-kit/actions'
-      )
-      const extendedClient = walletClient.extend(erc7715ProviderActions())
-
-      const result = await extendedClient.requestExecutionPermissions([
-        {
-          chainId: ACTIVE_CHAIN.id,
-          permission: {
-            type: 'erc20-token-allowance' as const,
-            isAdjustmentAllowed: false,
-            data: {
-              allowanceAmount: 10_000_000n, // 10 USDC (6 decimals)
-              tokenAddress: USDC_ADDRESS,
-            },
-          },
-          to: addresses.governor as Hex,
-          expiry: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
-        },
-      ])
-
-      // Store the permission context for later redemption
-      if (result && result.length > 0) {
-        localStorage.setItem(
-          'vectis-permission-context',
-          JSON.stringify({
-            context: result[0].context,
-            delegationManager: result[0].delegationManager,
-          })
-        )
-      }
-
-      // Save state for the command center
-      localStorage.setItem(
-        'vectis-state',
-        JSON.stringify({
-          walletAddress: address,
-          rules: parsedRules,
-          addresses,
-        })
-      )
-
-      router.push('/command-center')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to sign delegation')
-    } finally {
-      setIsSigning(false)
-    }
-  }
-
-  // In signing step, allow skipping MetaMask for demo
-  const handleSkipToCommandCenter = () => {
-    localStorage.setItem(
-      'vectis-state',
-      JSON.stringify({
-        walletAddress: address || addresses.user,
-        rules: parsedRules,
-        addresses,
-        demoMode: true,
-      })
-    )
-    router.push('/command-center')
-  }
-
-  const displayAddress = address || addresses.user
-
+function Numbered({ n, color }: { n: string; color: string }) {
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-6"
-      style={{ backgroundColor: THEME.bg }}
+      className="flex items-center justify-center font-mono"
+      style={{ width: 36, height: 36, borderRadius: '50%', background: THEME.bgNode, border: `1px solid ${color}99`, color, fontSize: 11, fontWeight: 600, boxShadow: `0 0 26px ${color}3d` }}
     >
-      <div className="w-full max-w-lg">
-        {/* Logo / Title */}
-        <div className="text-center mb-8">
-          <h1
-            className="text-4xl mb-2"
-            style={{
-              color: THEME.text,
-              fontFamily: "'Instrument Serif', Georgia, serif",
-            }}
-          >
-            Wallet with Opinions
+      {n}
+    </div>
+  )
+}
+
+const GIVE = [
+  {
+    marker: '◆',
+    color: THEME.amber,
+    label: 'OPINIONS — RULES',
+    quote: '“Never spend more than $10 a week. Be skeptical of anything promising yield above 8%.”',
+    body: ['You write rules once, in plain English. Venice splits them in two: hard limits become ', { t: 'on-chain caveats', c: THEME.cyan }, ' the chain itself enforces; preferences become ', { t: 'reasoning guidance', c: THEME.amber }, ' the agent thinks with.'],
+  },
+  {
+    marker: '◇',
+    color: THEME.cyan,
+    label: 'MEMORY — THE AUDIT LOG',
+    quote: '“I declined that farm at 12:15. Here’s why, and here’s the hash.”',
+    body: ['Every action lands in a tamper-evident log — actor, reasoning, cost, tx hash, outcome. When an unsafe action is blocked, the ', { t: 'blocking caveat is named on the record', c: THEME.cyan }, '. The wallet remembers why.'],
+  },
+  {
+    marker: '◈',
+    color: THEME.amber,
+    label: 'BUDGET — DELEGATED ALLOWANCE',
+    quote: '“It spends inside an allowance. It never holds your keys.”',
+    body: ['A weekly USDC allowance delegated under ERC-7710. The Governor spends within it; sub-agents get ', { t: 'slices of slices', c: THEME.text }, ' — 20% of remaining, then nothing at all. Settlement is gasless via the 1Shot relayer.'],
+  },
+]
+
+const PILLARS = [
+  { n: '1', color: THEME.amber, title: 'Attenuated redelegation', body: 'Authority only ever shrinks downstream. A child agent can never spend more, reach further, or delegate wider than its parent — the invariant is checked on-chain at redemption, every hop.', cite: 'South & Pentland · arXiv:2501.09674' },
+  { n: '2', color: THEME.cyan, title: 'Policy + immutable audit log', body: 'An unsafe action doesn’t get caught by a reviewer — it reverts on-chain, and the attempt is recorded with its reason and the blocking caveat named. Tamper-evident by construction.', cite: 'arXiv:2509.07131 · arXiv:2507.08249' },
+  { n: '3', color: THEME.red, title: 'Cascade revocation', body: 'Revoke the root and the entire subtree dies at once. A redemption that worked a minute ago now reverts — the kill switch isn’t a feature bolted on, it’s intrinsic to the chain.', cite: 'arXiv:2507.08249 · kill switches' },
+]
+
+const FLOW: [string, string, string][] = [
+  ['MONITOR', 'governor', THEME.amber],
+  ['REDELEGATE', 'scope ⊂ parent', THEME.cyan],
+  ['x402 PAY', '402 → 200', THEME.cyan],
+  ['SUMMARIZE', '≤ 500 tokens', THEME.amber],
+  ['REASON', 'venice · trace', THEME.amber],
+  ['CLEARSIGN', 'if high-stakes', THEME.red],
+  ['1SHOT RELAY', 'gasless · webhook', THEME.green],
+  ['MEMORY', 'hash + reason', THEME.text],
+]
+
+export default function Landing() {
+  return (
+    <div style={{ position: 'relative', minHeight: '100vh' }}>
+      {/* ===== HERO ===== */}
+      <section style={{ position: 'relative', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+        <HeroCanvas />
+        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 60% 50% at 50% 46%, rgba(11,7,8,0.40), rgba(11,7,8,0.04) 55%, rgba(11,7,8,0.94) 100%)', pointerEvents: 'none' }} />
+
+        {/* top bar */}
+        <div className="flex items-center gap-3" style={{ position: 'absolute', top: 24, left: 28, zIndex: 3 }}>
+          <div className="flex items-center justify-center" style={{ ...display, width: 34, height: 34, borderRadius: 9, border: '1px solid rgba(240,88,74,0.55)', background: 'rgba(240,88,74,0.09)', color: THEME.red, fontStyle: 'italic', fontSize: 20, paddingBottom: 6, boxSizing: 'border-box' }}>”</div>
+          <div style={{ ...display, fontSize: 18 }}>Wallet with Opinions</div>
+        </div>
+        <div className="flex items-center gap-1.5 font-mono" style={{ position: 'absolute', top: 26, right: 28, zIndex: 3, fontSize: 10, color: THEME.textMuted, padding: '8px 11px', border: `1px solid ${THEME.borderStrong}`, borderRadius: 8, background: THEME.bgNode }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: THEME.baseBlue, display: 'inline-block' }} />
+          BASE MAINNET · 8453
+        </div>
+
+        <div style={{ position: 'relative', zIndex: 2, maxWidth: 1000, textAlign: 'center', padding: '0 24px' }}>
+          <div className="font-mono animate-fade-up" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 4, color: THEME.textFaint }}>
+            METAMASK SMART ACCOUNTS × VENICE AI × 1SHOT × BASE MAINNET
+          </div>
+          <h1 className="animate-fade-up" style={{ ...display, marginTop: 26, fontSize: 82, lineHeight: 1.04, letterSpacing: -0.5, color: '#F0EBE0', textWrap: 'balance' }}>
+            The wallet that has <span style={{ fontStyle: 'italic', color: THEME.red }}>something to say.</span>
           </h1>
-          <p className="text-sm" style={{ color: THEME.textMuted }}>
-            Give your wallet rules. It acts for you — with agents that hold less
-            power at every hop.
+          <p className="animate-fade-up" style={{ margin: '26px auto 0', maxWidth: 680, fontSize: 16.5, lineHeight: 1.65, color: THEME.textSoft, textWrap: 'pretty' }}>
+            Give it opinions, memory, and a budget — it stops being a vault and starts acting for you.
+            Authority flows down a cryptographic chain where every link holds{' '}
+            <span style={{ color: THEME.text }}>less power than the one above it</span>, enforced on-chain, not by promise.
           </p>
-          <div className="flex justify-center gap-2 mt-3">
-            <span
-              className="text-xs px-2 py-0.5 rounded"
-              style={{ backgroundColor: THEME.border, color: THEME.cyan }}
-            >
-              ERC-7710
-            </span>
-            <span
-              className="text-xs px-2 py-0.5 rounded"
-              style={{ backgroundColor: THEME.border, color: THEME.amber }}
-            >
-              Venice AI
-            </span>
-            <span
-              className="text-xs px-2 py-0.5 rounded"
-              style={{ backgroundColor: THEME.border, color: THEME.green }}
-            >
-              1Shot
-            </span>
+          <div className="flex gap-3 justify-center animate-fade-up" style={{ marginTop: 34 }}>
+            <Link href="/command-center" style={{ ...mono, fontSize: 12, fontWeight: 600, letterSpacing: 0.4, color: '#0B0708', padding: '15px 26px', background: THEME.red, borderRadius: 10, boxShadow: '0 6px 34px rgba(240,88,74,0.36)', textDecoration: 'none' }}>
+              ▶ Watch it think
+            </Link>
+            <Link href="/onboard" style={{ ...mono, fontSize: 12, fontWeight: 600, letterSpacing: 0.4, color: THEME.text, padding: '15px 26px', border: `1px solid ${THEME.borderStrong}`, borderRadius: 10, textDecoration: 'none' }}>
+              Set up your wallet ↓
+            </Link>
+          </div>
+          <div className="flex gap-2 justify-center flex-wrap animate-fade-up" style={{ marginTop: 38 }}>
+            {['ERC-7710 · DEPTH-2 REDELEGATION', 'x402 MICRO-PAYMENTS', 'GASLESS · EIP-7702', 'ZERO-RETENTION REASONING'].map((t) => (
+              <span key={t} className="font-mono" style={{ fontSize: 9.5, letterSpacing: 1, padding: '7px 11px', border: `1px solid ${THEME.borderStrong}`, borderRadius: 7, color: THEME.textFaint }}>{t}</span>
+            ))}
           </div>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex items-center justify-center gap-2 mb-6">
-          {['Connect', 'Rules', 'Sign'].map((label, i) => {
-            const stepIndex = ['connect', 'rules', 'signing'].indexOf(step)
-            const isActive = i === stepIndex
-            const isDone = i < stepIndex
-            return (
-              <div key={label} className="flex items-center gap-2">
-                <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium"
-                  style={{
-                    backgroundColor: isDone
-                      ? THEME.green
-                      : isActive
-                        ? THEME.amber
-                        : THEME.border,
-                    color: isDone || isActive ? THEME.bg : THEME.textMuted,
-                  }}
-                >
-                  {isDone ? '\u2713' : i + 1}
-                </div>
-                <span
-                  className="text-xs"
-                  style={{ color: isActive ? THEME.text : THEME.textMuted }}
-                >
-                  {label}
-                </span>
-                {i < 2 && (
-                  <div
-                    className="w-8 h-px"
-                    style={{
-                      backgroundColor: isDone ? THEME.green : THEME.border,
-                    }}
-                  />
-                )}
+        <div className="flex flex-col items-center gap-2.5" style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }}>
+          <div className="font-mono" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 3, color: THEME.textGhost }}>THE CHAIN BEGINS HERE</div>
+          <div className="animate-nudge" style={{ color: THEME.red, fontSize: 14 }}>↓</div>
+          <div style={{ width: 1, height: 74, background: 'linear-gradient(180deg, rgba(240,88,74,0.75), rgba(240,88,74,0))' }} />
+        </div>
+      </section>
+
+      {/* ===== NARRATIVE ===== */}
+      <div style={{ position: 'relative', padding: '110px 24px 30px', maxWidth: 1180, margin: '0 auto' }}>
+        {/* S1 */}
+        <section className="flex flex-col items-center gap-3.5" style={{ textAlign: 'center' }}>
+          <Numbered n="01" color={THEME.red} />
+          <div className="font-mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 3.5, color: THEME.textFaint }}>WHAT YOU GIVE IT</div>
+          <div style={{ ...display, fontSize: 42, color: '#F0EBE0' }}>Opinions. Memory. Budget.</div>
+        </section>
+        <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginTop: 48 }}>
+          {GIVE.map((c) => (
+            <div key={c.label} style={{ background: THEME.bgCard, border: `1px solid ${c.color}38`, borderRadius: 14, padding: '22px 24px' }}>
+              <div className="font-mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 2.5, color: c.color }}>{c.marker} {c.label}</div>
+              <div style={{ ...display, marginTop: 12, fontStyle: 'italic', fontSize: 20, color: THEME.textSoft, lineHeight: 1.35 }}>{c.quote}</div>
+              <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.65, color: THEME.textMuted }}>
+                {c.body.map((seg, i) => (typeof seg === 'string' ? seg : <span key={i} style={{ color: seg.c }}>{seg.t}</span>))}
               </div>
-            )
-          })}
+            </div>
+          ))}
         </div>
 
-        {/* Content card */}
-        <div
-          className="rounded-xl border p-6"
-          style={{ backgroundColor: THEME.bgCard, borderColor: THEME.border }}
-        >
-          {/* Step 1: Connect */}
-          {step === 'connect' && (
-            <div className="text-center">
-              <div className="text-3xl mb-4">
-                <svg width="40" height="40" viewBox="0 0 40 40" className="mx-auto">
-                  <rect width="40" height="40" rx="8" fill="#F6851B" />
-                  <path d="M30 12l-8 6 1.5-3.5L30 12z" fill="#E2761B" stroke="#E2761B" strokeWidth="0.5" />
-                  <path d="M10 12l8 6-1.5-3.5L10 12z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.5" />
-                  <path d="M27 25l-2 3.5 5-1.5 1.5-3.5L27 25z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.5" />
-                  <path d="M8.5 23.5L10 27l5 1.5-2-3.5-4.5-1.5z" fill="#E4761B" stroke="#E4761B" strokeWidth="0.5" />
-                </svg>
-              </div>
-              <h2
-                className="text-lg font-medium mb-2"
-                style={{ color: THEME.text }}
-              >
-                Connect MetaMask
-              </h2>
-              <p className="text-sm mb-6" style={{ color: THEME.textMuted }}>
-                Connect your MetaMask wallet to initialize the agent hierarchy.
-                Uses Smart Accounts Kit for ERC-7710 delegations.
-              </p>
-              <button
-                onClick={handleConnect}
-                disabled={isInitializing}
-                className="w-full py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-                style={{ backgroundColor: THEME.amber, color: THEME.bg }}
-              >
-                {isInitializing
-                  ? 'Initializing agents...'
-                  : isConnected
-                    ? 'Continue with Connected Wallet'
-                    : 'Connect MetaMask Wallet'}
-              </button>
-
-              {/* Demo mode button */}
-              <div className="mt-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex-1 h-px" style={{ backgroundColor: THEME.border }} />
-                  <span className="text-xs" style={{ color: THEME.textMuted }}>or</span>
-                  <div className="flex-1 h-px" style={{ backgroundColor: THEME.border }} />
-                </div>
-                <button
-                  onClick={handleDemoMode}
-                  disabled={isInitializing}
-                  className="w-full py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 border"
-                  style={{
-                    backgroundColor: 'transparent',
-                    color: THEME.cyan,
-                    borderColor: THEME.cyan,
-                  }}
-                >
-                  {isInitializing && isDemoMode
-                    ? 'Starting demo...'
-                    : 'Launch Live Demo'}
-                </button>
-                <p className="text-xs mt-2" style={{ color: THEME.textMuted }}>
-                  Full agent pipeline with real delegation signing, Venice AI reasoning, and 1Shot execution flow
-                </p>
-              </div>
-
-              {error && (
-                <p className="text-xs mt-3" style={{ color: THEME.red }}>
-                  {error}
-                </p>
-              )}
+        {/* S2 */}
+        <section className="flex flex-col items-center gap-3.5" style={{ textAlign: 'center', marginTop: 130 }}>
+          <Numbered n="02" color={THEME.cyan} />
+          <div className="font-mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 3.5, color: THEME.textFaint }}>ONE PRIMITIVE, VIEWED THREE WAYS</div>
+          <div style={{ ...display, fontSize: 42, color: '#F0EBE0', maxWidth: 760, lineHeight: 1.15 }}>
+            The delegation engine is the policy, the log, <span style={{ fontStyle: 'italic', color: THEME.cyan }}>and the kill switch.</span>
+          </div>
+        </section>
+        <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginTop: 48 }}>
+          {PILLARS.map((p) => (
+            <div key={p.n} style={{ background: THEME.bgCard, border: `1px solid ${THEME.borderStrong}`, borderRadius: 14, padding: '22px 24px' }}>
+              <div className="font-mono" style={{ fontSize: 22, fontWeight: 600, color: p.color }}>{p.n}</div>
+              <div style={{ ...display, marginTop: 12, fontSize: 21, color: '#F0EBE0' }}>{p.title}</div>
+              <div style={{ marginTop: 9, fontSize: 12.5, lineHeight: 1.65, color: THEME.textMuted }}>{p.body}</div>
+              <div className="font-mono" style={{ marginTop: 13, fontSize: 9, lineHeight: 1.6, color: THEME.textGhost }}>{p.cite}</div>
             </div>
-          )}
-
-          {/* Step 2: Rules */}
-          {step === 'rules' && (
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-lg">&#x1F4DD;</span>
-                <h2
-                  className="text-lg font-medium"
-                  style={{ color: THEME.text }}
-                >
-                  Set Your Rules
-                </h2>
-              </div>
-
-              {/* Connection status */}
-              <div
-                className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg text-xs"
-                style={{ backgroundColor: THEME.bg }}
-              >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: THEME.green }}
-                />
-                <span style={{ color: THEME.green }}>
-                  Connected: {displayAddress?.slice(0, 6)}...
-                  {displayAddress?.slice(-4)}
-                </span>
-                <span
-                  className="ml-auto px-1.5 py-0.5 rounded"
-                  style={{
-                    backgroundColor: THEME.border,
-                    color: THEME.cyan,
-                  }}
-                >
-                  Keys loaded
-                </span>
-              </div>
-
-              <p className="text-sm mb-4" style={{ color: THEME.textMuted }}>
-                Write rules in plain English. Venice AI will parse them into
-                on-chain caveats (hard limits) and reasoning guidance (soft
-                preferences).
-              </p>
-              <RuleInput onRulesParsed={handleRulesParsed} />
-            </div>
-          )}
-
-          {/* Step 3: Sign */}
-          {step === 'signing' && (
-            <div className="text-center">
-              <div className="text-3xl mb-4">&#x1F510;</div>
-              <h2
-                className="text-lg font-medium mb-2"
-                style={{ color: THEME.text }}
-              >
-                Grant Delegation
-              </h2>
-              <p className="text-sm mb-4" style={{ color: THEME.textMuted }}>
-                MetaMask will request permission to grant the Governor agent a
-                scoped USDC delegation via ERC-7715 Advanced Permissions.
-              </p>
-
-              {/* Delegation summary */}
-              <div
-                className="rounded-lg p-4 mb-6 text-left"
-                style={{ backgroundColor: THEME.bg }}
-              >
-                <div
-                  className="text-xs font-medium mb-2"
-                  style={{ color: THEME.amber }}
-                >
-                  Delegation Summary
-                </div>
-                <div className="space-y-1 text-xs">
-                  <div style={{ color: THEME.text }}>
-                    <span style={{ color: THEME.textMuted }}>From:</span>{' '}
-                    {displayAddress?.slice(0, 10)}...{displayAddress?.slice(-4)}{' '}
-                    <span style={{ color: THEME.cyan }}>(your wallet)</span>
-                  </div>
-                  <div style={{ color: THEME.text }}>
-                    <span style={{ color: THEME.textMuted }}>To:</span>{' '}
-                    {addresses.governor
-                      ? `${addresses.governor.slice(0, 10)}...${addresses.governor.slice(-4)}`
-                      : '...'}{' '}
-                    <span style={{ color: THEME.amber }}>(Governor)</span>
-                  </div>
-                  <div style={{ color: THEME.text }}>
-                    <span style={{ color: THEME.textMuted }}>Permission:</span>{' '}
-                    erc20-token-allowance (USDC)
-                  </div>
-                  <div style={{ color: THEME.text }}>
-                    <span style={{ color: THEME.textMuted }}>Budget:</span>{' '}
-                    10 USDC / week
-                  </div>
-                  <div style={{ color: THEME.text }}>
-                    <span style={{ color: THEME.textMuted }}>Expiry:</span> 7
-                    days
-                  </div>
-                  <div style={{ color: THEME.green }}>
-                    <span style={{ color: THEME.textMuted }}>Hard rules:</span>{' '}
-                    {parsedRules?.hardConstraints.length || 0} on-chain caveats
-                  </div>
-                  <div style={{ color: THEME.textMuted }}>
-                    Soft preferences:{' '}
-                    {parsedRules?.softPreferences.length || 0} reasoning rules
-                  </div>
-                  <div style={{ color: THEME.green }}>
-                    <span style={{ color: THEME.textMuted }}>Signing:</span>{' '}
-                    Server-side + MetaMask ERC-7715
-                  </div>
-                </div>
-              </div>
-
-              <button
-                onClick={handleSignDelegation}
-                disabled={isSigning}
-                className="w-full py-3 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
-                style={{
-                  backgroundColor: isSigning ? THEME.bgCard : THEME.green,
-                  color: THEME.bg,
-                }}
-              >
-                {isSigning
-                  ? 'Requesting permission from MetaMask...'
-                  : 'Sign & Enter Command Center'}
-              </button>
-
-              {/* Skip option for demo or when MetaMask isn't available */}
-              <button
-                onClick={handleSkipToCommandCenter}
-                className="w-full mt-3 py-2 rounded-lg text-xs transition-colors border"
-                style={{
-                  backgroundColor: 'transparent',
-                  color: THEME.textMuted,
-                  borderColor: THEME.border,
-                }}
-              >
-                Skip signing (use server-side delegations only)
-              </button>
-
-              {error && (
-                <p className="text-xs mt-3" style={{ color: THEME.red }}>
-                  {error}
-                </p>
-              )}
-            </div>
-          )}
+          ))}
         </div>
 
-        {/* Architecture note */}
-        <div className="text-center mt-6">
-          <p className="text-xs" style={{ color: THEME.textMuted }}>
-            User &rarr; Governor &rarr; Researcher &rarr; Summarizer
-          </p>
-          <p className="text-xs" style={{ color: THEME.textMuted }}>
-            Every child holds strictly less power than its parent. Enforced
-            on-chain via ERC-7710.
-          </p>
+        {/* S3 */}
+        <section className="flex flex-col items-center gap-3.5" style={{ textAlign: 'center', marginTop: 130 }}>
+          <Numbered n="03" color={THEME.amber} />
+          <div className="font-mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 3.5, color: THEME.textFaint }}>HOW A DECISION FLOWS</div>
+          <div style={{ ...display, fontSize: 42, color: '#F0EBE0' }}>Eight moves, every one on the record.</div>
+        </section>
+        <div className="flex items-stretch justify-center flex-wrap gap-2.5" style={{ marginTop: 44 }}>
+          {FLOW.map(([title, sub, color], i) => (
+            <div key={title} className="flex items-center gap-2.5">
+              <div className="flex flex-col gap-1.5" style={{ minWidth: 128, padding: '15px 16px', border: `1px solid ${color}66`, borderRadius: 11, background: THEME.bgCard, textAlign: 'center', boxShadow: `0 0 24px ${color}12` }}>
+                <div className="font-mono" style={{ fontSize: 14, fontWeight: 700, color }}>{title}</div>
+                <div className="font-mono" style={{ fontSize: 10.5, lineHeight: 1.3, color: THEME.textMuted }}>{sub}</div>
+              </div>
+              {i < FLOW.length - 1 && <span style={{ color: THEME.textFaint, fontSize: 15 }}>→</span>}
+            </div>
+          ))}
+        </div>
+        <div className="font-mono" style={{ marginTop: 26, textAlign: 'center', fontSize: 10, lineHeight: 1.6, color: THEME.textGhost }}>
+          the judge’s eye travels: proposal → authority → reasoning → on-chain result
+        </div>
+
+        {/* CTA into command center */}
+        <section className="flex flex-col items-center gap-3.5" style={{ marginTop: 110, textAlign: 'center' }}>
+          <div className="flex items-center justify-center" style={{ width: 42, height: 42, borderRadius: '50%', background: THEME.bgNode, border: '1px solid rgba(98,217,232,0.6)', color: THEME.green, fontSize: 13, boxShadow: '0 0 30px rgba(98,217,232,0.28)' }}>▶</div>
+          <div className="font-mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: 3.5, color: THEME.textFaint }}>EVERYTHING ABOVE — RUNNING LIVE</div>
+          <div style={{ ...display, fontSize: 46, color: '#F0EBE0' }}>The Command Center</div>
+          <div className="flex gap-3" style={{ marginTop: 8 }}>
+            <Link href="/command-center" style={{ ...mono, fontSize: 12, fontWeight: 600, color: '#0B0708', padding: '14px 24px', background: THEME.amber, borderRadius: 10, textDecoration: 'none', boxShadow: '0 4px 24px rgba(242,181,68,0.25)' }}>
+              Enter the command center →
+            </Link>
+            <Link href="/onboard" style={{ ...mono, fontSize: 12, fontWeight: 600, color: THEME.text, padding: '14px 24px', border: `1px solid ${THEME.borderStrong}`, borderRadius: 10, textDecoration: 'none' }}>
+              Set up your own
+            </Link>
+          </div>
+        </section>
+
+        <div className="font-mono" style={{ marginTop: 90, textAlign: 'center', fontSize: 9, letterSpacing: 1.4, color: THEME.textGhost }}>
+          BUILT FOR METAMASK SMART ACCOUNTS KIT × 1SHOT API × VENICE AI · BASE MAINNET
         </div>
       </div>
     </div>

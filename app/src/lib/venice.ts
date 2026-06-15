@@ -9,6 +9,38 @@ function getClient() {
   })
 }
 
+// ---- Live-vs-fallback status (surfaced honestly in the UI) ----
+export type VeniceStatus = 'live' | 'fallback' | 'no-credits' | 'no-key' | 'unknown'
+let veniceStatus: VeniceStatus = process.env.VENICE_API_KEY ? 'unknown' : 'no-key'
+let veniceLastError = ''
+
+export function getVeniceStatus() {
+  return { status: veniceStatus, error: veniceLastError, model: VENICE_MODEL }
+}
+
+function recordVeniceError(e: unknown) {
+  const err = e as { status?: number; message?: string }
+  if (err?.status === 402 || /insufficient|balance|credit/i.test(err?.message || '')) veniceStatus = 'no-credits'
+  else if (!process.env.VENICE_API_KEY) veniceStatus = 'no-key'
+  else veniceStatus = 'fallback'
+  veniceLastError = err?.message || String(e)
+}
+
+// Robust JSON extraction — Venice/llama sometimes wraps JSON in prose or fences.
+function parseJsonLoose<T>(content: string): T {
+  const stripped = content.replace(/```json\n?|```/g, '').trim()
+  try {
+    return JSON.parse(stripped) as T
+  } catch {
+    const start = stripped.indexOf('{')
+    const end = stripped.lastIndexOf('}')
+    if (start !== -1 && end > start) {
+      return JSON.parse(stripped.slice(start, end + 1)) as T
+    }
+    throw new Error('no JSON object found in Venice response')
+  }
+}
+
 // Parse natural language rules into structured constraints
 export async function parseRules(naturalLanguageRules: string): Promise<ParsedRules> {
   try {
@@ -50,9 +82,11 @@ Output ONLY valid JSON, no markdown fences.`,
     })
 
     const content = response.choices[0]?.message?.content || '{}'
-    const parsed = JSON.parse(content.replace(/```json\n?|\n?```/g, ''))
-    return parsed as ParsedRules
-  } catch {
+    const parsed = parseJsonLoose<ParsedRules>(content)
+    veniceStatus = 'live'
+    return parsed
+  } catch (e) {
+    recordVeniceError(e)
     // Derive sensible constraints from the user's natural language input
     const rules = naturalLanguageRules.toLowerCase()
     const hardConstraints = []
@@ -157,8 +191,11 @@ Output ONLY valid JSON.`,
     })
 
     const content = response.choices[0]?.message?.content || '{}'
-    return JSON.parse(content.replace(/```json\n?|\n?```/g, '')) as VeniceReasoning
-  } catch {
+    const parsed = parseJsonLoose<VeniceReasoning>(content)
+    veniceStatus = 'live'
+    return parsed
+  } catch (e) {
+    recordVeniceError(e)
     const budgetConstraint = rules.hardConstraints.find(c => c.type === 'budget')
     const maxBudget = typeof budgetConstraint?.value === 'number' ? budgetConstraint.value : 10
     const estimatedCost = 0.003
@@ -212,8 +249,10 @@ Provide raw, detailed data that can be summarized later. Be specific with number
       max_tokens: 1500,
     })
 
+    veniceStatus = 'live'
     return response.choices[0]?.message?.content || 'No data available.'
-  } catch {
+  } catch (e) {
+    recordVeniceError(e)
     const topic = query.toLowerCase()
     const isBase = topic.includes('base')
     const isGrant = topic.includes('grant')
@@ -318,8 +357,10 @@ Be factual and precise. Do not add information not in the source data.`,
       max_tokens: 500,
     })
 
+    veniceStatus = 'live'
     return response.choices[0]?.message?.content || 'Summary unavailable.'
-  } catch {
+  } catch (e) {
+    recordVeniceError(e)
     // Extract key lines from the raw data to build a summary
     const lines = rawData.split('\n').filter(l => l.trim().length > 0)
     const bulletPoints = lines
@@ -376,8 +417,10 @@ Keep it under 100 words. Be honest about uncertainties.`,
       max_tokens: 300,
     })
 
+    veniceStatus = 'live'
     return response.choices[0]?.message?.content || reasoning.reasoning
-  } catch {
+  } catch (e) {
+    recordVeniceError(e)
     return `**What:** ${task.substring(0, 100)}
 **Why:** ${reasoning.reasoning.substring(0, 150)}
 **Cost:** $${reasoning.cost.toFixed(4)}

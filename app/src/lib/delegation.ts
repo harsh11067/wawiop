@@ -8,7 +8,7 @@ import {
   ScopeType,
   ExecutionMode,
 } from '@metamask/smart-accounts-kit'
-import { createCaveatBuilder } from '@metamask/smart-accounts-kit/utils'
+import { createCaveatBuilder, hashDelegation } from '@metamask/smart-accounts-kit/utils'
 import { DelegationManager } from '@metamask/smart-accounts-kit/contracts'
 import {
   type PublicClient,
@@ -357,6 +357,83 @@ export async function createSignedRelayerDelegation(
     expirySeconds,
   )
   return signDelegationWithKey(delegation, userPrivateKey)
+}
+
+// A delegation after it has been signed
+export type SignedDelegation = ReturnType<typeof createDelegation> & { signature: Hex }
+
+// The ROOT authority sentinel — a delegation with this authority is a root (no parent)
+export const ROOT_AUTHORITY = ('0x' + 'f'.repeat(64)) as Hex
+
+// Build the full, cryptographically-LINKED redelegation chain:
+//   User → Governor (root) → Researcher (child) → Summarizer (grandchild)
+// Each child's `authority` is the keccak hash of its parent, so the chain is a
+// real ERC-7710 chain redeemable on-chain (not independent root delegations).
+export async function buildSignedChain(
+  keys: { user: Hex; governor: Hex; researcher: Hex },
+  addresses: { governor: Address; researcher: Address; summarizer: Address },
+): Promise<{
+  root: SignedDelegation
+  researcher: SignedDelegation
+  summarizer: SignedDelegation
+  rootToLeaf: SignedDelegation[]
+}> {
+  const root = (await createSignedRootDelegation(keys.user, addresses.governor)) as SignedDelegation
+  const researcher = (await createSignedResearcherDelegation(root, keys.governor, addresses.researcher)) as SignedDelegation
+  const summarizer = (await createSignedSummarizerDelegation(researcher, keys.researcher, addresses.summarizer)) as SignedDelegation
+  return { root, researcher, summarizer, rootToLeaf: [root, researcher, summarizer] }
+}
+
+export interface LinkageHop {
+  from: string
+  to: string
+  linked: boolean
+  isRoot: boolean
+  expectedAuthority: Hex
+  actualAuthority: Hex
+}
+
+// Cryptographically verify that every child references its parent:
+//   chain[0].authority == ROOT_AUTHORITY  (the root)
+//   chain[i].authority == hashDelegation(chain[i-1])  (each redelegation)
+// This is exactly what the on-chain DelegationManager checks at redemption.
+export function verifyChainLinkage(
+  chainRootToLeaf: SignedDelegation[],
+  labels: string[] = [],
+): { ok: boolean; hops: LinkageHop[] } {
+  const hops: LinkageHop[] = []
+  let ok = true
+  for (let i = 0; i < chainRootToLeaf.length; i++) {
+    const d = chainRootToLeaf[i]
+    const label = labels[i] ?? `hop ${i}`
+    if (i === 0) {
+      const isRoot = d.authority.toLowerCase() === ROOT_AUTHORITY.toLowerCase()
+      ok = ok && isRoot
+      hops.push({ from: 'ROOT', to: label, linked: isRoot, isRoot: true, expectedAuthority: ROOT_AUTHORITY, actualAuthority: d.authority as Hex })
+    } else {
+      const expected = hashDelegation(chainRootToLeaf[i - 1]) as Hex
+      const linked = expected.toLowerCase() === d.authority.toLowerCase()
+      ok = ok && linked
+      hops.push({ from: labels[i - 1] ?? `hop ${i - 1}`, to: label, linked, isRoot: false, expectedAuthority: expected, actualAuthority: d.authority as Hex })
+    }
+  }
+  return { ok, hops }
+}
+
+// Encode a redeemDelegations call for a USDC transfer. `chainLeafToRoot` must be
+// ordered leaf-first (the delegation whose delegate is the caller) → root-last.
+export function encodeRedeemChain(
+  chainLeafToRoot: SignedDelegation[],
+  target: Address,
+  amount: bigint,
+): Hex {
+  const callData = encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [target, amount] })
+  const executions = [createExecution({ target: USDC_ADDRESS, callData })]
+  return DelegationManager.encode.redeemDelegations({
+    delegations: [chainLeafToRoot],
+    modes: [ExecutionMode.SingleDefault],
+    executions: [executions],
+  }) as Hex
 }
 
 // Get human-readable scope description for an agent

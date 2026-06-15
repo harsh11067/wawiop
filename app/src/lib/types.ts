@@ -84,11 +84,31 @@ export type SSEEventType =
   | 'clearsign_request'
   | 'execution_result'
   | 'agent_status'
+  | 'pulse'          // animate a packet of authority along a chain edge
+  | 'proposal_update' // a DAO proposal changed (new / vote landed)
+  | 'revocation'     // kill-switch: subtree revoked / restored
+  | 'voice'          // the wallet "speaks" a line
+  | 'relay'          // 1Shot relay lifecycle step
   | 'error'
 
 export interface SSEEvent {
   type: SSEEventType
   data: Record<string, unknown>
+  timestamp: number
+}
+
+// Chain edges for pulse animation (User→Governor, Governor→Researcher, Researcher→Summarizer, Governor→RiskScorer)
+export type ChainEdge = 'ug' | 'gr' | 'rs' | 'gx'
+
+// DAO governance proposal (Best A2A / governance showcase)
+export interface Proposal {
+  id: string
+  title: string
+  rule: string          // which user rule applies
+  vote: 'YES' | 'NO' | '…'
+  forPct: number        // tally after the vote
+  hash: string          // castVote tx hash ('pending' while in flight)
+  pending: boolean
   timestamp: number
 }
 

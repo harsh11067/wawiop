@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo } from 'react'
 import type { ClearSignRequest } from '@/lib/types'
 import { THEME } from '@/lib/constants'
 
@@ -9,140 +9,210 @@ interface ClearSignProps {
   onRespond: (response: 'proceed' | 'reject') => void
 }
 
+function splitTrace(req: ClearSignRequest): string[] {
+  const raw = req.reasoning.thinkTrace || req.reasoning.reasoning || ''
+  const cleaned = raw.replace(/<\/?think>/g, '')
+  return cleaned
+    .split('\n')
+    .map((l) => l.replace(/^\s*[-•\d.]+\s*/, '').trim())
+    .filter((l) => l.length > 0)
+    .slice(0, 6)
+}
+
 export default function ClearSign({ request, onRespond }: ClearSignProps) {
-  const [displayedThink, setDisplayedThink] = useState('')
-  const [isTyping, setIsTyping] = useState(false)
-
-  // Typewriter effect for the thinking trace
-  useEffect(() => {
-    if (!request) {
-      setDisplayedThink('')
-      setIsTyping(false)
-      return
-    }
-
-    const thinkText = request.reasoning.thinkTrace || request.reasoning.reasoning
-    setDisplayedThink('')
-    setIsTyping(true)
-    let i = 0
-
-    const interval = setInterval(() => {
-      if (i < thinkText.length) {
-        setDisplayedThink(thinkText.slice(0, i + 1))
-        i++
-      } else {
-        setIsTyping(false)
-        clearInterval(interval)
-      }
-    }, 15)
-
-    return () => clearInterval(interval)
+  const enforced = useMemo(() => {
+    if (!request) return []
+    const cost = request.cost.toFixed(2)
+    return [
+      `weekly budget — ${cost} ≤ ${request.budgetRemaining.toFixed(2)} remaining (erc20PeriodTransfer)`,
+      `per-action cap — ${cost} ≤ 5.00 (spendLimit)`,
+      `payee on allowlist (allowedTargets)`,
+      `fresh salt · inside time window (timestamp)`,
+    ]
   }, [request])
 
-  if (!request) {
-    return (
-      <div
-        className="rounded-xl border p-4 h-full flex items-center justify-center"
-        style={{ backgroundColor: THEME.bgCard, borderColor: THEME.border }}
-      >
-        <div className="text-center" style={{ color: THEME.textMuted }}>
-          <div className="text-2xl mb-2">🛡</div>
-          <div className="text-sm">ClearSign</div>
-          <div className="text-xs mt-1">Waiting for high-stakes action...</div>
-        </div>
-      </div>
-    )
-  }
+  const soft = useMemo(() => {
+    if (!request) return []
+    return request.reasoning.rulesCited?.length
+      ? request.reasoning.rulesCited.slice(0, 3)
+      : ['prefer free sources before paid ones', 'be skeptical of yield above 8%']
+  }, [request])
+
+  if (!request) return null
+
+  const trace = splitTrace(request)
+  const trigger =
+    request.reasoning.decision === 'escalate'
+      ? 'ESCALATED · NEEDS YOUR SIGNATURE'
+      : 'HIGH-STAKES ACTION · ABOVE THRESHOLD'
 
   return (
     <div
-      className="rounded-xl border p-4 h-full overflow-auto"
-      style={{
-        backgroundColor: THEME.bgCard,
-        borderColor: THEME.amber,
-        borderWidth: 2,
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center animate-veil-in"
+      style={{ background: 'rgba(4,6,10,0.8)', backdropFilter: 'blur(7px)' }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🛡</span>
-          <span className="font-semibold text-sm" style={{ color: THEME.amber }}>
-            ClearSign Required
-          </span>
+      <div
+        className="animate-cs-in"
+        style={{
+          width: 740,
+          maxWidth: '94vw',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          background: '#0B0E15',
+          border: '1px solid rgba(242,181,68,0.45)',
+          borderRadius: 18,
+          padding: '26px 28px',
+          boxShadow: '0 30px 90px rgba(0,0,0,0.65), 0 0 70px rgba(242,181,68,0.07)',
+        }}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3.5">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex items-center justify-center"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 9,
+                border: '1px solid rgba(242,181,68,0.5)',
+                color: THEME.amber,
+                fontSize: 15,
+              }}
+            >
+              ⌖
+            </div>
+            <div>
+              <div className="font-display" style={{ fontSize: 22, lineHeight: 1 }}>
+                ClearSign
+              </div>
+              <div
+                className="font-mono"
+                style={{ fontSize: 8.5, fontWeight: 500, letterSpacing: 2.2, color: THEME.textFaint, marginTop: 5 }}
+              >
+                WHAT YOU SIGN IS WHAT YOU SEE
+              </div>
+            </div>
+          </div>
+          <div
+            className="font-mono"
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              letterSpacing: 0.8,
+              color: THEME.red,
+              border: '1px solid rgba(240,88,74,0.35)',
+              background: 'rgba(240,88,74,0.07)',
+              padding: '7px 10px',
+              borderRadius: 7,
+              maxWidth: 300,
+              textAlign: 'right',
+            }}
+          >
+            {trigger}
+          </div>
         </div>
-        <span
-          className="text-xs px-2 py-0.5 rounded"
-          style={{ backgroundColor: `${THEME.amber}20`, color: THEME.amber }}
-        >
-          {request.reasoning.decision.toUpperCase()}
-        </span>
-      </div>
 
-      {/* Action description */}
-      <div className="mb-3">
-        <div className="text-xs mb-1" style={{ color: THEME.textMuted }}>About to:</div>
-        <div className="text-sm font-medium" style={{ color: THEME.text }}>
-          {request.action}
-        </div>
-      </div>
-
-      {/* Venice reasoning trace */}
-      <div className="mb-3">
-        <div className="text-xs mb-1" style={{ color: THEME.textMuted }}>Venice reasoning:</div>
+        {/* Title */}
         <div
-          className="rounded-lg p-3 text-xs font-mono leading-relaxed max-h-32 overflow-auto"
-          style={{ backgroundColor: THEME.bg, color: THEME.text }}
+          className="font-display"
+          style={{ marginTop: 18, fontStyle: 'italic', fontSize: 25, lineHeight: 1.3, color: '#EFEAE0', textWrap: 'pretty' }}
         >
-          <span style={{ color: THEME.cyan }}>&lt;think&gt;</span>
-          <br />
-          {displayedThink}
-          {isTyping && <span className="animate-pulse" style={{ color: THEME.cyan }}>▊</span>}
-          <br />
-          <span style={{ color: THEME.cyan }}>&lt;/think&gt;</span>
+          “{request.description || request.action}”
         </div>
-      </div>
 
-      {/* Plain English explanation */}
-      <div className="mb-3 text-sm" style={{ color: THEME.text }}>
-        {request.description}
-      </div>
-
-      {/* Cost and budget */}
-      <div className="flex justify-between mb-4 text-xs">
-        <div>
-          <span style={{ color: THEME.textMuted }}>Cost: </span>
-          <span style={{ color: THEME.amber }}>${request.cost.toFixed(4)}</span>
+        {/* Enforced vs reasoned */}
+        <div className="grid grid-cols-2 gap-3.5" style={{ marginTop: 18 }}>
+          <div
+            style={{ border: '1px solid rgba(98,217,232,0.25)', background: 'rgba(98,217,232,0.04)', borderRadius: 10, padding: '12px 14px' }}
+          >
+            <div className="font-mono" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 1.8, color: THEME.cyan }}>
+              ENFORCED ON-CHAIN
+            </div>
+            {enforced.map((c, i) => (
+              <div key={i} className="flex gap-1.5 font-mono" style={{ marginTop: 8, fontSize: 10, lineHeight: 1.5, color: '#B9E6CF' }}>
+                <span style={{ color: THEME.cyan }}>✓</span>
+                <span>{c}</span>
+              </div>
+            ))}
+          </div>
+          <div
+            style={{ border: '1px solid rgba(242,181,68,0.22)', background: 'rgba(242,181,68,0.04)', borderRadius: 10, padding: '12px 14px' }}
+          >
+            <div className="font-mono" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 1.8, color: THEME.amber }}>
+              REASONED · NOT ON-CHAIN
+            </div>
+            {soft.map((c, i) => (
+              <div key={i} className="flex gap-1.5 font-mono" style={{ marginTop: 8, fontSize: 10, lineHeight: 1.5, color: '#E5D9B6' }}>
+                <span style={{ color: THEME.amber }}>↺</span>
+                <span>{c}</span>
+              </div>
+            ))}
+          </div>
         </div>
-        <div>
-          <span style={{ color: THEME.textMuted }}>Budget left: </span>
-          <span style={{ color: THEME.green }}>${request.budgetRemaining.toFixed(2)}</span>
-        </div>
-      </div>
 
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => onRespond('proceed')}
-          className="flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors"
-          style={{
-            backgroundColor: THEME.green,
-            color: THEME.bg,
-          }}
-        >
-          Proceed
-        </button>
-        <button
-          onClick={() => onRespond('reject')}
-          className="flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors"
-          style={{
-            backgroundColor: 'transparent',
-            color: THEME.red,
-            border: `1px solid ${THEME.red}`,
-          }}
-        >
-          Reject
-        </button>
+        {/* Reasoning trace */}
+        <div style={{ marginTop: 14, border: `1px solid ${THEME.border}`, borderRadius: 10, padding: '12px 14px' }}>
+          <div className="font-mono" style={{ fontSize: 9, fontWeight: 600, letterSpacing: 1.8, color: THEME.textMuted }}>
+            VENICE REASONING TRACE
+          </div>
+          {trace.map((r, i) => (
+            <div key={i} className="font-mono" style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.6, color: THEME.venice }}>
+              ▸ {r}
+            </div>
+          ))}
+        </div>
+
+        {/* Cost + actions */}
+        <div className="flex items-center justify-between gap-3" style={{ marginTop: 16 }}>
+          <div>
+            <div className="font-mono" style={{ fontSize: 12, fontWeight: 600, color: THEME.text }}>
+              ${request.cost.toFixed(4)} + relay fee · gasless via 1Shot
+            </div>
+            <div className="font-mono" style={{ fontSize: 10, lineHeight: 1.6, color: THEME.textFaint }}>
+              budget after: {request.budgetRemaining.toFixed(2)} →{' '}
+              {(request.budgetRemaining - request.cost).toFixed(2)} USDC remaining this week
+            </div>
+          </div>
+          <div className="flex gap-2.5 items-center">
+            <button
+              onClick={() => onRespond('reject')}
+              style={{ fontSize: 11, color: THEME.textMuted, padding: '11px 8px', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              Reject
+            </button>
+            <button
+              onClick={() => onRespond('reject')}
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: THEME.text,
+                padding: '11px 16px',
+                border: '1px solid rgba(255,255,255,0.18)',
+                borderRadius: 9,
+                background: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              Override
+            </button>
+            <button
+              onClick={() => onRespond('proceed')}
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: '#0B0E15',
+                padding: '12px 20px',
+                background: THEME.amber,
+                borderRadius: 9,
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 4px 24px rgba(242,181,68,0.25)',
+              }}
+            >
+              Proceed — sign once
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

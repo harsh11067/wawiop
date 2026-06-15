@@ -113,7 +113,16 @@ Local action log for the demo: each entry = {ts, actor, action, reasoning, x402 
 ## 11. Repo layout
 
 ```
-/agent /governor /subagents(researcher,summarizer,[risk]) /firewall(caveats)
-/redelegation (chain builder + redeem)  /relayer (1Shot JSON-RPC + webhook)
-/venice (parser, reason, clearsign)  /x402 (client + optional PoD)  /app (UI)  /test
+/app
+  /src
+    /app               # Next.js pages and API endpoints (api/agent, api/events)
+    /components        # Frontend components (DelegationTree, ActivityFeed, ClearSign)
+    /lib
+      /agents          # Governor agent logic and memory state
+      delegation.ts    # Cryptographic ERC-7710/7715 signing & validation
+      oneshot.ts       # 1Shot JSON-RPC gasless relayer client
+      venice.ts        # Venice AI API wrapper for reasoning and rule parsing
+      x402.ts          # Micropayment handling (client and endpoints)
+/docs                  # Refined plans, specifications, and showcases
+/dashboard             # Static mockups and screenshots
 ```
